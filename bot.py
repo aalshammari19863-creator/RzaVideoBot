@@ -1,6 +1,6 @@
 import os
 import asyncio
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -11,9 +11,8 @@ from telegram.ext import (
 import yt_dlp
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-SNAPCHAT_URL = "https://snapchat.com"
 
-# دالة مساعدة لحذف الرسائل تلقائياً بعد 45 ثانية
+# دالة مساعدة لحذف الرسائل تلقائياً بعد 45 ثانية لضمان الخصوصية وتنظيف الشات
 async def delete_message_after_delay(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int, delay: int = 45):
     await asyncio.sleep(delay)
     try:
@@ -49,21 +48,20 @@ def download_tiktok(url):
                         break
             return "video", file_path
 
-# دالة موحدة لعرض رسالة الترحيب ورابط السناب شات
+# دالة موحدة لعرض رسالة الترحيب الرسمية المطلوبة
 async def send_welcome_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     
-    keyboard = [
-        [InlineKeyboardButton("👻 تابعنا على سناب شات", url=SNAPCHAT_URL)]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    welcome_msg = await update.message.reply_text(
+    welcome_text = (
         "👋 أهلاً بك في RzaVideoBot\n\n"
-        "يسعدنا جداً استخدامك للبوت! لا تنسى التكرم بزيارة حسابنا على سناب شات ودعمنا بالمتابعة ✨\n\n"
-        "للتحميل الآن، أرسل رابط تيك توك (فيديو أو ألبوم صور) مباشرة وسأقوم بسحبه بدون علامة مائية فوراً!",
-        reply_markup=reply_markup
+        "شكراً لاستخدامك البوت، يسعدنا وجودك معنا 🤍\n\n"
+        "📥 أرسل رابط الفيديو - صور من TikTok أو أي منصة مدعومة، وسأقوم بمعالجته وإرسال الفيديو لك بأفضل جودة ممكنة.\n\n"
+        "⚡ سريع • سهل • مجاني\n\n"
+        "نتمنى لك تجربة ممتعة، ولا تتردد في مشاركة البوت مع أصدقائك.\n\n"
+        "— فريق Rza"
     )
+    
+    welcome_msg = await update.message.reply_text(welcome_text)
     
     # حذف رسالة الترحيب ورسالة المستخدم بعد 45 ثانية
     asyncio.create_task(delete_message_after_delay(context, chat_id, welcome_msg.message_id))
@@ -78,20 +76,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     url = update.message.text
     
-    # إذا كانت الرسالة ليست رابط تيك توك، يتم التعامل معها كرسالة ترحيبية تلقائياً
-    if "tiktok.com" not in url:
+    # التحقق من الرابط، وإذا كانت الرسالة غير مفهومة يتم تحويلها تلقائياً لرسالة الترحيب
+    if "tiktok.com" not in url and "http" not in url:
         await send_welcome_message(update, context)
         return
 
-    # معالجة رابط التيك توك مباشرة بدون شروط اشتراك إجبارية
     status_message = await update.message.reply_text("⏳ جاري سحب المحتوى ومعالجته، يرجى الانتظار...")
 
     try:
         loop = asyncio.get_event_loop()
         media_type, file_data = await loop.run_in_executor(None, download_tiktok, url)
 
-        # رسالة شكر راقية تظهر مع الميديا وتختفي معها بعد 45 ثانية
-        thank_you_text = "🤍 شكراً لك على ثقتك بـ RzaVideoBot.\n\nتم تحميل طلبك بنجاح وبأعلى جودة بدون حقوق. يسعدنا دائماً خدمتكم ومتابعتكم لنا! ✨"
+        # رسالة الشكر الرسمية المطلوبة بعد تحميل الفيديو أو الصور
+        thank_you_text = (
+            "✅ تم تجهيز الفيديو بنجاح.\n\n"
+            "شكراً لاستخدامك RzaVideoBot 🤍\n\n"
+            "نتمنى أن تكون الخدمة قد نالت إعجابك، ويسعدنا دعمك بمشاركة البوت مع أصدقائك.\n\n"
+            "نراك قريباً."
+        )
 
         if media_type == "video" and os.path.exists(file_data):
             with open(file_data, 'rb') as video:
@@ -114,11 +116,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         print(f"Error: {e}")
-        fail_msg = await update.message.reply_text("❌ حدث خطأ غير متوقع أثناء معالجة الرابط.")
+        fail_msg = await update.message.reply_text("❌ حدث خطأ أثناء معالجة الرابط، تأكد من صحته.")
         asyncio.create_task(delete_message_after_delay(context, chat_id, fail_msg.message_id))
 
     finally:
-        # حذف رسالة الانتظار فوراً، وحذف رسالة المستخدم الأصلية
+        # حذف رسالة الانتظار فوراً، وحذف رسالة المستخدم الأصلية التي بها الرابط
         try:
             await status_message.delete()
         except Exception:
