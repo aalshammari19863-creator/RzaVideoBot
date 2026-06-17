@@ -1,6 +1,7 @@
 import os
 import asyncio
-from telegram import Update
+import aiohttp
+from telegram import Update, InputMediaPhoto
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -8,11 +9,10 @@ from telegram.ext import (
     filters,
     ContextTypes
 )
-import yt_dlp
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# دالة مساعدة لحذف الرسائل تلقائياً بعد 45 ثانية لضمان الخصوصية وتنظيف الشات
+# دالة مساعدة لحذف الرسائل تلقائياً بعد 45 ثانية
 async def delete_message_after_delay(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int, delay: int = 45):
     await asyncio.sleep(delay)
     try:
@@ -20,35 +20,23 @@ async def delete_message_after_delay(context: ContextTypes.DEFAULT_TYPE, chat_id
     except Exception:
         pass
 
-# دالة لتنزيل الفيديو أو الصور باستخدام yt-dlp
-def download_tiktok(url):
-    ydl_opts = {
-        'outtmpl': 'downloads/%(id)s.%(ext)s',
-        'quiet': True,
-        'no_warnings': True,
-    }
+# دالة جلب بيانات التيك توك (فيديو أو صور) عبر API مجاني وسريع
+async def fetch_tiktok_data(url):
+    api_url = "https://tikwm.com"
+    data = {"url": url, "hd": 1}
     
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        
-        if 'entries' in info:
-            files = []
-            for entry in info['entries']:
-                file_path = ydl.prepare_filename(entry)
-                if os.path.exists(file_path):
-                    files.append(file_path)
-            return "images", files
-        else:
-            file_path = ydl.prepare_filename(info)
-            if not os.path.exists(file_path):
-                base, _ = os.path.splitext(file_path)
-                for ext in ['mp4', 'mkv', 'webm', 'jpg', 'png']:
-                    if os.path.exists(f"{base}.{ext}"):
-                        file_path = f"{base}.{ext}"
-                        break
-            return "video", file_path
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.post(api_url, data=data) as response:
+                if response.status == 200:
+                    res_json = await response.json()
+                    if res_json.get("code") == 0:
+                        return res_json.get("data")
+        except Exception as e:
+            print(f"API Error: {e}")
+    return None
 
-# دالة موحدة لعرض رسالة الترحيب الرسمية المطلوبة
+# دالة موحدة لعرض رسالة الترحيب الرسمية
 async def send_welcome_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     
@@ -62,8 +50,6 @@ async def send_welcome_message(update: Update, context: ContextTypes.DEFAULT_TYP
     )
     
     welcome_msg = await update.message.reply_text(welcome_text)
-    
-    # حذف رسالة الترحيب ورسالة المستخدم بعد 45 ثانية
     asyncio.create_task(delete_message_after_delay(context, chat_id, welcome_msg.message_id))
     asyncio.create_task(delete_message_after_delay(context, chat_id, update.message.message_id))
 
@@ -76,51 +62,77 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     url = update.message.text
     
-    # التحقق من الرابط، وإذا كانت الرسالة غير مفهومة يتم تحويلها تلقائياً لرسالة الترحيب
+    # تحويل الرسائل غير المفهومة لرسالة الترحيب
     if "tiktok.com" not in url and "http" not in url:
         await send_welcome_message(update, context)
         return
 
     status_message = await update.message.reply_text("⏳ جاري سحب المحتوى ومعالجته، يرجى الانتظار...")
 
+    # نصوص الشكر الرسمية المطلوبة
+    thank_you_text = (
+        "✅ تم تجهيز الفيديو بنجاح.\n\n"
+        "شكراً لاستخدامك RzaVideoBot 🤍\n\n"
+        "نتمنى أن تكون الخدمة قد نالت إعجابك، ويسعدنا دعمك بمشاركة البوت مع أصدقائك.\n\n"
+        "نراك قريباً."
+    )
+    
+    thank_you_images_text = (
+        "✅ تم تجهيز الصور بنجاح.\n\n"
+        "شكراً لاستخدامك RzaVideoBot 🤍\n\n"
+        "نتمنى أن تكون الخدمة قد نالت إعجابك، ويسعدنا دعمك بمشاركة البوت مع أصدقائك.\n\n"
+        "نراك قريباً."
+    )
+
+    tiktok_data = await fetch_tiktok_data(url)
+
+    if not tiktok_data:
+        fail_msg = await update.message.reply_text("❌ فشل في سحب المحتوى، تأكد من أن الحساب ليس خاصاً أو جرب رابط آخر.")
+        asyncio.create_task(delete_message_after_delay(context, chat_id, fail_msg.message_id))
+        try:
+            await status_message.delete()
+        except Exception: pass
+        asyncio.create_task(delete_message_after_delay(context, chat_id, update.message.message_id, delay=0))
+        return
+
     try:
-        loop = asyncio.get_event_loop()
-        media_type, file_data = await loop.run_in_executor(None, download_tiktok, url)
-
-        # رسالة الشكر الرسمية المطلوبة بعد تحميل الفيديو أو الصور
-        thank_you_text = (
-            "✅ تم تجهيز الفيديو بنجاح.\n\n"
-            "شكراً لاستخدامك RzaVideoBot 🤍\n\n"
-            "نتمنى أن تكون الخدمة قد نالت إعجابك، ويسعدنا دعمك بمشاركة البوت مع أصدقائك.\n\n"
-            "نراك قريباً."
-        )
-
-        if media_type == "video" and os.path.exists(file_data):
-            with open(file_data, 'rb') as video:
-                sent_media = await update.message.reply_video(video=video, caption=thank_you_text)
-            os.remove(file_data)
-            asyncio.create_task(delete_message_after_delay(context, chat_id, sent_media.message_id))
+        # الحالة الأولى: إذا كان الرابط ألبوم صور (يحتوي على قائمة images)
+        if "images" in tiktok_data and tiktok_data["images"]:
+            images_list = tiktok_data["images"]
+            media_group = []
             
-        elif media_type == "images" and file_data:
-            for file_path in file_data:
-                with open(file_path, 'rb') as photo:
-                    sent_media = await update.message.reply_photo(photo=photo)
-                os.remove(file_path)
-                asyncio.create_task(delete_message_after_delay(context, chat_id, sent_media.message_id))
+            # نأخذ أول 10 صور فقط لأن تلغرام لا يسمح بإرسال أكثر من 10 صور في ألبوم واحد دفعة واحدة
+            for img_url in images_list[:10]:
+                media_group.append(InputMediaPhoto(media=img_url))
             
-            thanks_msg = await update.message.reply_text(thank_you_text)
+            # إرسال ألبوم الصور للمستخدم مباشرة عبر روابطها بدون استهلاك مساحة السيرفر
+            sent_media = await update.message.reply_media_group(media=media_group)
+            
+            # إرسال رسالة الشكر الخاصة بالصور منفصلة بعد الألبوم
+            thanks_msg = await update.message.reply_text(thank_you_images_text)
+            
+            # مجدول حذف الصور ورسالة الشكر
+            for msg in sent_media:
+                asyncio.create_task(delete_message_after_delay(context, chat_id, msg.message_id))
             asyncio.create_task(delete_message_after_delay(context, chat_id, thanks_msg.message_id))
+
+        # الحالة الثانية: إذا كان الرابط فيديو عادي
         else:
-            fail_msg = await update.message.reply_text("❌ فشل في تحميل المحتوى، يرجى تجربة رابط آخر.")
-            asyncio.create_task(delete_message_after_delay(context, chat_id, fail_msg.message_id))
+            video_url = tiktok_data.get("hdplay") or tiktok_data.get("play")
+            if video_url:
+                sent_media = await update.message.reply_video(video=video_url, caption=thank_you_text)
+                asyncio.create_task(delete_message_after_delay(context, chat_id, sent_media.message_id))
+            else:
+                fail_msg = await update.message.reply_text("❌ لم نتمكن من العثور على ملف الفيديو في الرابط.")
+                asyncio.create_task(delete_message_after_delay(context, chat_id, fail_msg.message_id))
 
     except Exception as e:
-        print(f"Error: {e}")
-        fail_msg = await update.message.reply_text("❌ حدث خطأ أثناء معالجة الرابط، تأكد من صحته.")
+        print(f"Send Error: {e}")
+        fail_msg = await update.message.reply_text("❌ حدث خطأ أثناء إرسال الميديا.")
         asyncio.create_task(delete_message_after_delay(context, chat_id, fail_msg.message_id))
 
     finally:
-        # حذف رسالة الانتظار فوراً، وحذف رسالة المستخدم الأصلية التي بها الرابط
+        # حذف رسالة الانتظار فوراً، وحذف رسالة المستخدم الأصلية
         try:
             await status_message.delete()
         except Exception:
@@ -128,9 +140,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         asyncio.create_task(delete_message_after_delay(context, chat_id, update.message.message_id, delay=0))
 
 def main():
-    if not os.path.exists('downloads'):
-        os.makedirs('downloads')
-
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
