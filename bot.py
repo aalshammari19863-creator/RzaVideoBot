@@ -1,6 +1,12 @@
+
+
+
+
+
 import os
 import asyncio
 import aiohttp
+import sqlite3
 from telegram import Update, InputMediaPhoto
 from telegram.ext import (
     Application,
@@ -10,7 +16,49 @@ from telegram.ext import (
     ContextTypes
 )
 
+# 🔑 التوكن ومعرف المسؤول
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = 945253440  # ⚠️ استبدل هذا الرقم بـ ID حسابك على تليغرام لتتمكن من رؤية الإحصائيات
+
+# 🗄️ إعداد قاعدة البيانات وتجهيزها عند إقلاع البوت
+DB_FILE = "users.db"
+
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# 📝 دالة لتسجيل المستخدمين الجدد في قاعدة البيانات
+def register_user(user_id: int):
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Database Error: {e}")
+
+# 📊 دالة لجلب العدد الإجمالي للمستخدمين
+def get_users_count() -> int:
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM users")
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count
+    except Exception as e:
+        print(f"Database Error: {e}")
+        return 0
 
 async def delete_message_after_delay(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int, delay: int = 45):
     await asyncio.sleep(delay)
@@ -35,6 +83,11 @@ async def fetch_tiktok_data(url):
 
 async def send_welcome_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    
+    # حفظ المستخدم الجديد فوراً عند الضغط على /start
+    register_user(user_id)
+    
     welcome_text = (
         "👋 أهلاً بك في RzaVideoBot\n\n"
         "شكراً لاستخدامك البوت، يسعدنا وجودك معنا 🤍\n\n"
@@ -50,9 +103,23 @@ async def send_welcome_message(update: Update, context: ContextTypes.DEFAULT_TYP
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_welcome_message(update, context)
 
+# 📊 أمر خاص بالمسؤول فقط لمعرفة الإحصائيات الكلية
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id == ADMIN_ID:
+        total_users = get_users_count()
+        await update.message.reply_text(f"📊 إحصائيات البوت الكلية:\n👥 عدد المستخدمين المسجلين: {total_users}")
+    else:
+        # إذا حاول شخص آخر استخدام الأمر لن يظهر له شيء
+        pass
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
     url = update.message.text
+    
+    # حفظ المستخدم تلقائياً عند إرسال أي رسالة للبوت لضمان تسجيله
+    register_user(user_id)
     
     if "tiktok.com" not in url and "http" not in url:
         await send_welcome_message(update, context)
@@ -117,11 +184,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         asyncio.create_task(delete_message_after_delay(context, chat_id, update.message.message_id, delay=0))
 
 def main():
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("Bot Started")
-    app.run_polling()
+    if not BOT_TOKEN:
+        print("Error: BOT_TOKEN is missing!")
+        return
+
+    application = Application.builder().token(BOT_TOKEN).build()
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("users", stats)) # أضفنا الأمر هنا
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    print("RzaVideoBot is running...")
+    application.run_polling()
 
 if __name__ == "__main__":
     main()
